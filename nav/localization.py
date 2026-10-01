@@ -152,7 +152,7 @@ def main():
         print("Camera Open : "+repr(err)+". Exit program.")
         exit()
 
-    info = zed.get_camera_information().camera_configuration.calibration_parameters_raw.left_cam
+    info = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam
     fx = info.fx
     fy = info.fy
     cx = info.cx
