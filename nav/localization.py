@@ -19,7 +19,7 @@ def detect_tag_pose(image, fx, fy, cx, cy, kp):
     TAG_FAMILY = cv2.aruco.DICT_APRILTAG_36h11
 
     # Physical side length of the AprilTag, in meters
-    TAG_SIZE = 0.05
+    TAG_SIZE = 0.1
 
     # Camera intrinsics
     # Replace these with your calibrated camera parameters.
