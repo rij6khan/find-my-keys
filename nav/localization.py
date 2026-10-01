@@ -117,10 +117,7 @@ def relative_transform(R1, t1, R2, t2):
     return T21
 
 def localize(imgs, fx, fy, cx, cy, kp):
-    img1 = cv2.imread("image1.jpg")
-    img2 = cv2.imread("image2.jpg")
-
-    if img1 is None or img2 is None:
+    if imgs[0] is None or imgs[1] is None:
         raise RuntimeError("Could not load input images.")
 
 
