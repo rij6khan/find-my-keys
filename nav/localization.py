@@ -1,6 +1,7 @@
 import pyzed.sl as sl
 import cv2
 import numpy as np
+from PIL import Image
 
 def detect_tag_pose(image, fx, fy, cx, cy, kp):
     """
@@ -175,6 +176,10 @@ def main():
             print("Image resolution: {0} x {1} || Image timestamp: {2}\n".format(image.get_width(), image.get_height(),
                 timestamp.get_milliseconds()))
             i = i + 1
+            # 1. Open the image
+            img = Image.fromarray(imgs[i])
+            # 2. Save the image (Pillow automatically detects the format from the file extension)
+            img.save(f"april_tag_{i}.png")
 
     # Close the camera
     zed.close()
