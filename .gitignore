@@ -1,0 +1,85 @@
+# ============================================================
+# Find My Keys - Git Ignore
+# ============================================================
+
+# ------------------------------------------------------------
+# Private / unpublished material
+# ------------------------------------------------------------
+drafts not for publishing/
+**/drafts not for publishing/
+
+# ------------------------------------------------------------
+# Unity generated folders
+# ------------------------------------------------------------
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+
+**/[Ll]ibrary/
+**/[Tt]emp/
+**/[Oo]bj/
+**/[Ll]ogs/
+**/[Uu]ser[Ss]ettings/
+
+# ------------------------------------------------------------
+# Unity build output
+# ------------------------------------------------------------
+[Bb]uild/
+[Bb]uilds/
+
+**/[Bb]uild/
+**/[Bb]uilds/
+
+# ------------------------------------------------------------
+# Visual Studio / IDE generated files
+# ------------------------------------------------------------
+.vs/
+**/.vs/
+
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+
+# ------------------------------------------------------------
+# Operating-system generated files
+# ------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------------------------------------------------------------
+# Temporary / backup files
+# ------------------------------------------------------------
+*.tmp
+*.bak
+*~
+* - BK.txt
+* - BK.cs
+
+# ------------------------------------------------------------
+# Unity crash / memory captures
+# ------------------------------------------------------------
+sysinfo.txt
+*.stacktrace
+MemoryCaptures/
+
+# ------------------------------------------------------------
+# Rider
+# ------------------------------------------------------------
+.idea/
+*.sln.iml
+# Unity / Android temporary native build files
+**/.utmp/
+
+# Unity temporary assemblies
+**/TempAssembly.dll
+
+# Local backup files and their Unity metadata
+* - BK.txt
+* - BK.txt.meta
+* - BK.cs
+* - BK.cs.metaFindRetrieveKeys/Assets/Resources/DevAgentSettings.asset
