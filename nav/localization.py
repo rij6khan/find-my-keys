@@ -80,7 +80,7 @@ def detect_tag_pose(image, fx, fy, cx, cy, kp):
 
     R_cam_tag, _ = cv2.Rodrigues(rvec)
 
-    return R_cam_tag, tvec.reshape(3, 1)
+    return R_cam_tag, tvec.reshape(3, 1), tag_corners
 
 
 # ------------------------------------------------------------
@@ -123,11 +123,22 @@ def localize(imgs, fx, fy, cx, cy, kp):
 
 
     # Pose of camera 1 relative to AprilTag
-    R1, t1 = detect_tag_pose(imgs[0], fx, fy, cx, cy, kp)
+    R1, t1, corners1 = detect_tag_pose(imgs[0], fx, fy, cx, cy, kp)
 
     # Pose of camera 2 relative to AprilTag
-    R2, t2 = detect_tag_pose(imgs[1], fx, fy, cx, cy, kp)
+    R2, t2, corners2 = detect_tag_pose(imgs[1], fx, fy, cx, cy, kp)
 
+    # Save image with corners marked
+    corners = [corners1, corners2]
+    for i, image in enumerate(imgs):
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        for corner in corners[i]:
+            corner = corner.astype(int)
+            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,0] = 255
+            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,1] = 0
+            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,2] = 0
+        img = Image.fromarray(image)
+        img.save(f"april_tag_{i}.png")
 
     # Transformation from camera 1 -> camera 2
     T21 = relative_transform(R1, t1, R2, t2)
@@ -171,14 +182,10 @@ def main():
         if zed.grab(runtime_parameters) <= sl.ERROR_CODE.SUCCESS:
             # A new image is available if grab() returns ERROR_CODE.SUCCESS or a WARNING (an error_code lower than ERROR_CODE.SUCCESS)
             zed.retrieve_image(image, sl.VIEW.LEFT)
-            imgs.append(image.get_data()[:,:,:3])
+            imgs.append(image.get_data().copy()[:,:,:3])
             timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)  # Get the timestamp at the time the image was captured
             print("Image resolution: {0} x {1} || Image timestamp: {2}\n".format(image.get_width(), image.get_height(),
                 timestamp.get_milliseconds()))
-            # 1. Open the image
-            img = Image.fromarray(imgs[i])
-            # 2. Save the image (Pillow automatically detects the format from the file extension)
-            img.save(f"april_tag_{i}.png")
             i = i + 1
 
     # Close the camera
