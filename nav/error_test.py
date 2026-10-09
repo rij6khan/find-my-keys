@@ -89,7 +89,7 @@ def main():
     # Close the camera
     zed.close()
 
-    mse = compute_error(fx, fy, cx, cy, kp img)
+    mse = compute_error(fx, fy, cx, cy, kp, img)
     print(f"AprilTag localization error: {mse}")
 
 if __name__ == "__main__":

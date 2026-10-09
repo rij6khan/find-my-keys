@@ -20,7 +20,7 @@ def detect_tag_pose(image, fx, fy, cx, cy, kp):
     TAG_FAMILY = cv2.aruco.DICT_APRILTAG_36h11
 
     # Physical side length of the AprilTag, in meters
-    TAG_SIZE = 0.1
+    TAG_SIZE = 0.17
 
     # Camera intrinsics
     # Replace these with your calibrated camera parameters.
@@ -153,9 +153,12 @@ def localize(imgs, fx, fy, cx, cy, kp):
     print("\n4x4 transformation matrix:")
     print(T21)
 
+    return T21
+
 def main():
     zed = sl.Camera()
     init_params = sl.InitParameters()
+    init_params.coordinate_units = sl.UNIT.METER
     init_params.camera_resolution = sl.RESOLUTION.AUTO
     init_params.camera_fps = 30
 
@@ -163,6 +166,9 @@ def main():
     if err > sl.ERROR_CODE.SUCCESS:
         print("Camera Open : "+repr(err)+". Exit program.")
         exit()
+
+    tracking_parameters = sl.PositionalTrackingParameters()
+    err = zed.enable_positional_tracking(tracking_parameters)
 
     info = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam
     fx = info.fx
@@ -175,23 +181,60 @@ def main():
     i = 0
     imgs = []
     image = sl.Mat()
+    zed_pose = sl.Pose()
     runtime_parameters = sl.RuntimeParameters()
-    while(i<2):
-        read_key = input("Press Enter to take image.")
-        # Grab an image, a RuntimeParameters object must be given to grab()
-        if zed.grab(runtime_parameters) <= sl.ERROR_CODE.SUCCESS:
-            # A new image is available if grab() returns ERROR_CODE.SUCCESS or a WARNING (an error_code lower than ERROR_CODE.SUCCESS)
-            zed.retrieve_image(image, sl.VIEW.LEFT)
-            imgs.append(image.get_data().copy()[:,:,:3])
-            timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)  # Get the timestamp at the time the image was captured
-            print("Image resolution: {0} x {1} || Image timestamp: {2}\n".format(image.get_width(), image.get_height(),
-                timestamp.get_milliseconds()))
-            i = i + 1
 
+    poses = []
+    imgs = []
+    
+    for i in range(2):
+        input("Press Enter to take image.")
+
+        if zed.grab(runtime_parameters) != sl.ERROR_CODE.SUCCESS:
+            continue
+
+        zed.retrieve_image(image, sl.VIEW.LEFT)
+        imgs.append(image.get_data().copy()[:, :, :3])
+
+        if zed.get_position(
+            zed_pose,
+            sl.REFERENCE_FRAME.WORLD
+        ) != sl.POSITIONAL_TRACKING_STATE.OK:
+            print("Failed to get camera pose.")
+            continue
+        
+        T = np.array(zed_pose.pose_data(sl.Transform()).m, dtype=np.float64)
+        poses.append(T)
+
+        print("Camera pose:")
+        print(T)
+
+        timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)
+        print(
+            f"Image resolution: {image.get_width()} x {image.get_height()} "
+            f"|| Image timestamp: {timestamp.get_milliseconds()}\n"
+        )
+
+    T1, T2 = poses
+
+    T_1_to_2 = np.linalg.inv(T1) @ T2
+
+    print("Relative transformation (camera 1 -> camera 2):")
+    print(T_1_to_2)
+
+    print("\nRelative translation [x, y, z]:")
+    print(T_1_to_2[:3, 3])
     # Close the camera
     zed.close()
 
-    localize(imgs, fx, fy, cx, cy, kp)
+    tag_transform = localize(imgs, fx, fy, cx, cy, kp)
+
+    zed_trans = T_1_to_2[:3, 3]
+    tag_trans = tag_transform[:3, 3]
+    # breakpoint()
+    MSE = np.linalg.norm(zed_trans - tag_trans)
+    print(f"\nMean Squared Error between internal Zed computation and April Tag: {MSE}")
+
 
 if __name__ == "__main__":
     main()
