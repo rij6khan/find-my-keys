@@ -2,49 +2,58 @@ import pyzed.sl as sl
 import cv2
 import numpy as np
 from PIL import Image
-import apriltag
 
-def compute_error(fx, fy, cx, cy, img):
-    camera_matrix = np.array([[fx, 0, cx],
-                          [0, fy, cy],
-                          [0,  0,  1]], dtype=np.float32)
-    dist_coeffs = np.zeros((5, 1)) # Assuming minimal distortion or pre-undistorted image
-    tag_size = 0.165  # Size of the tag square in meters (e.g., 16.5 cm)
-
-    # 2. Load image and detect AprilTags
+def compute_error(fx, fy, cx, cy, kp, img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    options = apriltag.DetectorOptions(families="tag36h11")
-    detector = apriltag.Detector(options)
-    results = detector.detect(gray)
+    K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float64)
+    dist_coeffs = kp
 
-    # We need at least two tags to find the distance between them
-    if len(results) >= 2:
-        poses = []
-        
-        for r in results[:2]:  # Take the first two detected tags
-            # Define 3D object points of the tag corners in its own local coordinate system
-            obj_points = np.array([
-                [-tag_size / 2,  tag_size / 2, 0],
-                [ tag_size / 2,  tag_size / 2, 0],
-                [ tag_size / 2, -tag_size / 2, 0],
-                [-tag_size / 2, -tag_size / 2, 0]
-            ], dtype=np.float32)
-            
-            # Image points from AprilTag detection corners
-            img_points = np.array(r.corners, dtype=np.float32)
-            
-            # Estimate the 3D pose of the tag relative to the camera
-            _, rvec, tvec = cv2.solvePnP(obj_points, img_points, camera_matrix, dist_coeffs)
-            poses.append(tvec)
-        
-        # 3. Calculate Euclidean distance between xthe two 3D translation vectors
-        t1, t2 = poses[0], poses[1]
-        distance_3d = np.linalg.norm(t1 - t2)
-        
-        print(f"Real-world distance between tags: {distance_3d:.4f} meters")
-    else:
-        print("Could not detect at least two AprilTags.")
+    tag_size = 0.17  # meters; actual tag side length
+
+    aruco = cv2.aruco
+    dictionary = aruco.getPredefinedDictionary(aruco.DICT_APRILTAG_36h11)
+    detector = aruco.ArucoDetector(dictionary, aruco.DetectorParameters())
+    corners, ids, _ = detector.detectMarkers(gray)
+
+    image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    for corner in corners[i]:
+        corner = corner.astype(int)
+        image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,0] = 255
+        image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,1] = 0
+        image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,2] = 0
+    image = Image.fromarray(image)
+    image.save("april_tag_error.png")
+
+    if ids is None or len(ids) < 2:
+        raise ValueError("At least two AprilTags must be detected")
+
+    obj_pts = np.array([
+        [-tag_size / 2,  tag_size / 2, 0],
+        [ tag_size / 2,  tag_size / 2, 0],
+        [ tag_size / 2, -tag_size / 2, 0],
+        [-tag_size / 2, -tag_size / 2, 0]
+    ], dtype=np.float64)
+
+    centers = {}
+
+    for corner, tag_id in zip(corners, ids.flatten()):
+        ok, rvec, tvec = cv2.solvePnP(
+            obj_pts, corner.reshape(4, 2), K, dist_coeffs,
+            flags=cv2.SOLVEPNP_IPPE_SQUARE
+        )
+        if ok:
+            centers[tag_id] = tvec.flatten()
+
+    tag_ids = list(centers)
+    for i in range(len(tag_ids)):
+        for j in range(i + 1, len(tag_ids)):
+            a, b = tag_ids[i], tag_ids[j]
+            distance = np.linalg.norm(centers[a] - centers[b])
+            print(f"Tags {a} and {b}: {distance:.4f} m")
+
+    true_dist = tag_size + 0.1
+    return np.linalg.norm(distance - true_dist)
 
 def main():
     zed = sl.Camera()
@@ -80,7 +89,8 @@ def main():
     # Close the camera
     zed.close()
 
-    mse = compute_error(fx, fy, cx, cy, img)
+    mse = compute_error(fx, fy, cx, cy, kp img)
+    print(f"AprilTag localization error: {mse}")
 
 if __name__ == "__main__":
     main()
