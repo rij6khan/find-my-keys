@@ -1,164 +1,130 @@
 import pyzed.sl as sl
-import cv2
 import numpy as np
 from PIL import Image
+from scipy.spatial.transform import Rotation as R
+import argparse
+import json
+import cv2
 
-def detect_tag_pose(image, fx, fy, cx, cy, kp):
-    """
-    Detect an AprilTag and estimate the camera pose relative
-    to the tag.
-
-    Returns:
-        R_cam_tag : 3x3 rotation matrix
-        t_cam_tag : 3x1 translation vector
-
-    Convention:
-        X_cam = R_cam_tag @ X_tag + t_cam_tag
-    """
-
-    # AprilTag family
-    TAG_FAMILY = cv2.aruco.DICT_APRILTAG_36h11
-
-    # Physical side length of the AprilTag, in meters
-    TAG_SIZE = 0.17
-
-    # Camera intrinsics
-    # Replace these with your calibrated camera parameters.
-    K = np.array([
-        [fx,  0, cx],
-        [ 0, fy, cy],
-        [ 0,  0,  1]
-    ], dtype=np.float64)
-
-    DIST_COEFFS = np.array([
-        kp
-    ], dtype=np.float64)
-
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    dictionary = cv2.aruco.getPredefinedDictionary(TAG_FAMILY)
-
-    parameters = cv2.aruco.DetectorParameters()
-
-    detector = cv2.aruco.ArucoDetector(dictionary, parameters)
-
-    corners, ids, _ = detector.detectMarkers(gray)
-
-    if ids is None:
-        raise RuntimeError("No AprilTag detected.")
-
-    # Use the first detected tag.
-    # For multiple tags, select the desired ID here.
-    tag_corners = corners[0].reshape(4, 2)
-
-    # Tag coordinate system:
-    #
-    #       0 -------- 1
-    #       |          |
-    #       |          |
-    #       3 -------- 2
-    #
-    half = TAG_SIZE / 2.0
-
-    object_points = np.array([
-        [-half,  half, 0],
-        [ half,  half, 0],
-        [ half, -half, 0],
-        [-half, -half, 0]
-    ], dtype=np.float64)
-
-    success, rvec, tvec = cv2.solvePnP(
-        object_points,
-        tag_corners,
-        K,
-        DIST_COEFFS,
-        flags=cv2.SOLVEPNP_IPPE_SQUARE
-    )
-
-    if not success:
-        raise RuntimeError("solvePnP failed.")
-
-    R_cam_tag, _ = cv2.Rodrigues(rvec)
-
-    return R_cam_tag, tvec.reshape(3, 1), tag_corners
-
-
-# ------------------------------------------------------------
-# Relative transformation
-# ------------------------------------------------------------
-
-def relative_transform(R1, t1, R2, t2):
-    """
-    Compute transformation from camera 1 coordinates
-    to camera 2 coordinates.
-
-    Given:
-
-        X_cam1 = R1 @ X_tag + t1
-        X_cam2 = R2 @ X_tag + t2
-
-    We want:
-
-        X_cam2 = R21 @ X_cam1 + t21
-
-    Therefore:
-
-        R21 = R2 @ R1.T
-        t21 = t2 - R21 @ t1
-    """
-
-    R21 = R2 @ R1.T
-    t21 = t2 - R21 @ t1
-
-    T21 = np.eye(4)
-
-    T21[:3, :3] = R21
-    T21[:3, 3] = t21.flatten()
-
-    return T21
-
-def localize(imgs, fx, fy, cx, cy, kp):
+def localize(imgs, intrinsics):
     if imgs[0] is None or imgs[1] is None:
         raise RuntimeError("Could not load input images.")
 
+    tag_size = 0.17
+    half = tag_size / 2
 
-    # Pose of camera 1 relative to AprilTag
-    R1, t1, corners1 = detect_tag_pose(imgs[0], fx, fy, cx, cy, kp)
+    object_points = np.array([
+        [-half, half, 0],
+        [half, half, 0],
+        [half, -half, 0],
+        [-half, -half, 0]
+    ], dtype=np.float64)
 
-    # Pose of camera 2 relative to AprilTag
-    R2, t2, corners2 = detect_tag_pose(imgs[1], fx, fy, cx, cy, kp)
+    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+    detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
 
-    # Save image with corners marked
-    corners = [corners1, corners2]
-    for i, image in enumerate(imgs):
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        for corner in corners[i]:
-            corner = corner.astype(int)
-            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,0] = 255
-            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,1] = 0
-            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,2] = 0
-        img = Image.fromarray(image)
-        img.save(f"april_tag_{i}.png")
+    transforms = {}
+    target_ids = [0, 1]
 
-    # Transformation from camera 1 -> camera 2
-    T21 = relative_transform(R1, t1, R2, t2)
+    for i, (image, intr) in enumerate(zip(imgs, intrinsics)):
+        fx, fy, cx, cy, kp = intr
 
+        K = np.array([
+            [fx, 0, cx],
+            [0, fy, cy],
+            [0, 0, 1]
+        ], dtype=np.float64)
 
-    print("Rotation matrix:")
-    print(T21[:3, :3])
+        dist_coeffs = np.array([kp], dtype=np.float64)
 
-    print("\nTranslation vector [m]:")
-    print(T21[:3, 3])
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        corners, ids, _ = detector.detectMarkers(gray)
 
-    print("\n4x4 transformation matrix:")
-    print(T21)
+        if ids is None:
+            raise RuntimeError(f"No AprilTags detected in image {i}.")
 
-    return T21
+        ids = ids.flatten()
+        marked_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        transforms[i] = {}
 
-def main():
+        for tag_corners, tag_id in zip(corners, ids):
+            pts = tag_corners.reshape(4, 2)
+
+            for x, y in pts.astype(int):
+                marked_image[max(0, y-5):y+5, max(0, x-5):x+5] = [255, 0, 0]
+
+            if tag_id not in target_ids:
+                continue
+
+            success, rvec, tvec = cv2.solvePnP(
+                object_points,
+                pts,
+                K,
+                dist_coeffs,
+                flags=cv2.SOLVEPNP_IPPE_SQUARE
+            )
+
+            if not success:
+                raise RuntimeError(f"solvePnP failed for tag ID {tag_id} in image {i}.")
+
+            R, _ = cv2.Rodrigues(rvec)
+
+            T = np.eye(4)
+            T[:3, :3] = R
+            T[:3, 3] = tvec.flatten()
+
+            transforms[i][tag_id] = T
+
+        Image.fromarray(marked_image).save(f"april_tag_{i}.png")
+
+        missing = set(target_ids) - transforms[i].keys()
+        if missing:
+            raise RuntimeError(f"AprilTag IDs {sorted(missing)} not detected in image {i}.")
+
+    return (
+        transforms[0][0],
+        transforms[0][1],
+        transforms[1][0],
+        transforms[1][1]
+    )
+
+def compute_error(q_T_tag0, q_T_tag1, y_T_tag0, y_T_tag1):
+    y_T_q = y_T_tag0 @ np.linalg.inv(q_T_tag0)
+    y_T_tag1_test = y_T_q @ q_T_tag1
+    T_error = np.linalg.inv(y_T_tag1_test) @ y_T_tag1
+    
+    t_error = T_error[0:3, 3]
+    translation_error = np.linalg.norm(t_error)
+    
+    R_error = T_error[0:3, 0:3]
+    trace = np.clip((np.trace(R_error) - 1.0) / 2.0, -1.0, 1.0)
+    rotation_error_rad = np.arccos(trace)
+    rotation_error_deg = np.degrees(rotation_error_rad)
+    
+    return translation_error, rotation_error_deg
+
+def plot(T21, t2):
+    t = T21 @ t2
+
+def main(args):
+    quest_im = np.array(Image.open(args.img_path))
+    with open(args.json_path, 'r', encoding='utf-8') as file:
+        quest_data = json.load(file)
+    quest_fx = quest_data["sensor_fx"]
+    quest_fy = quest_data["sensor_fy"]
+    quest_cx = quest_data["sensor_cx"]
+    quest_cy = quest_data["sensor_cy"]
+    quest_disto = np.zeros(5)
+    quest_intrinsics = [quest_fx, quest_fy, quest_cx, quest_cy, quest_disto]
+    quest_position = quest_data["camera_world_position"]
+    quest_orientation = quest_data["camera_world_quaternion"]
+    quest_rot = R.from_quat(quest_orientation).as_matrix()
+    w_T_q = np.eye(4)
+    w_T_q[:3, :3] = quest_rot
+    w_T_q[:3, 3] = quest_position
+
     zed = sl.Camera()
     init_params = sl.InitParameters()
-    init_params.coordinate_units = sl.UNIT.METER
     init_params.camera_resolution = sl.RESOLUTION.AUTO
     init_params.camera_fps = 30
 
@@ -167,74 +133,46 @@ def main():
         print("Camera Open : "+repr(err)+". Exit program.")
         exit()
 
-    tracking_parameters = sl.PositionalTrackingParameters()
-    err = zed.enable_positional_tracking(tracking_parameters)
-
+    intrinsics = []
+    intrinsics.append(quest_intrinsics)
     info = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam
-    fx = info.fx
-    fy = info.fy
-    cx = info.cx
-    cy = info.cy
-    kp = info.disto[0:5]
+    intrinsics.append([info.fx, info.fy, info.cx, info.cy, info.disto[0:5]])
 
     # Capture 50 frames and stop
-    i = 0
     imgs = []
+    imgs.append(quest_im)
     image = sl.Mat()
-    zed_pose = sl.Pose()
     runtime_parameters = sl.RuntimeParameters()
 
-    poses = []
-    imgs = []
-    
-    for i in range(2):
-        input("Press Enter to take image.")
+    while(True):
+        read_key = input("Press any key to take image, press q to quit.")
+        if read_key == 'q':
+            break
+        # Grab an image, a RuntimeParameters object must be given to grab()
+        if zed.grab(runtime_parameters) <= sl.ERROR_CODE.SUCCESS:
+            # A new image is available if grab() returns ERROR_CODE.SUCCESS or a WARNING (an error_code lower than ERROR_CODE.SUCCESS)
+            zed.retrieve_image(image, sl.VIEW.LEFT)
+            imgs.append(image.get_data().copy()[:,:,:3])
+            timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)  # Get the timestamp at the time the image was captured
+            print("Image resolution: {0} x {1} || Image timestamp: {2}\n".format(image.get_width(), image.get_height(),
+                timestamp.get_milliseconds()))
 
-        if zed.grab(runtime_parameters) != sl.ERROR_CODE.SUCCESS:
-            continue
+        q_T_tag0, q_T_tag1, y_T_tag0, y_T_tag1 = localize(imgs, intrinsics)
+        trans_error, rot_error = compute_error(q_T_tag0, q_T_tag1, y_T_tag0, y_T_tag1)
+        print(f"\nTranslation error: {trans_error} m")
+        print(f"Rotation error: {rot_error} deg\n")
+        imgs.pop()
 
-        zed.retrieve_image(image, sl.VIEW.LEFT)
-        imgs.append(image.get_data().copy()[:, :, :3])
-
-        if zed.get_position(
-            zed_pose,
-            sl.REFERENCE_FRAME.WORLD
-        ) != sl.POSITIONAL_TRACKING_STATE.OK:
-            print("Failed to get camera pose.")
-            continue
-        
-        T = np.array(zed_pose.pose_data(sl.Transform()).m, dtype=np.float64)
-        poses.append(T)
-
-        print("Camera pose:")
-        print(T)
-
-        timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)
-        print(
-            f"Image resolution: {image.get_width()} x {image.get_height()} "
-            f"|| Image timestamp: {timestamp.get_milliseconds()}\n"
-        )
-
-    T1, T2 = poses
-
-    T_1_to_2 = np.linalg.inv(T1) @ T2
-
-    print("Relative transformation (camera 1 -> camera 2):")
-    print(T_1_to_2)
-
-    print("\nRelative translation [x, y, z]:")
-    print(T_1_to_2[:3, 3])
     # Close the camera
     zed.close()
 
-    tag_transform = localize(imgs, fx, fy, cx, cy, kp)
-
-    zed_trans = T_1_to_2[:3, 3]
-    tag_trans = tag_transform[:3, 3]
-    # breakpoint()
-    MSE = np.linalg.norm(zed_trans - tag_trans)
-    print(f"\nMean Squared Error between internal Zed computation and April Tag: {MSE}")
-
+def parse():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--img_path", type=str, required=True, default="quest_tag.jpg")
+    parser.add_argument("--json_path", type=str, required=True, default="quest_cam.json")
+    args = parser.parse_args()
+    return args
 
 if __name__ == "__main__":
-    main()
+    args = parse()
+    main(args)
