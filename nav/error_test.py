@@ -17,11 +17,13 @@ def compute_error(fx, fy, cx, cy, kp, img):
     corners, ids, _ = detector.detectMarkers(gray)
 
     image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    for corner in corners[i]:
-        corner = corner.astype(int)
-        image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,0] = 255
-        image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,1] = 0
-        image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,2] = 0
+
+    for img_corners in corners:
+        img_corners = img_corners[0].astype(int)
+        for corner in img_corners:
+            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,0] = 255
+            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,1] = 0
+            image[corner[1]-5:corner[1]+5,corner[0]-5:corner[0]+5,2] = 0
     image = Image.fromarray(image)
     image.save("april_tag_error.png")
 
@@ -52,7 +54,8 @@ def compute_error(fx, fy, cx, cy, kp, img):
             distance = np.linalg.norm(centers[a] - centers[b])
             print(f"Tags {a} and {b}: {distance:.4f} m")
 
-    true_dist = tag_size + 0.1
+    # breakpoint()
+    true_dist = tag_size + 0.15
     return np.linalg.norm(distance - true_dist)
 
 def main():
@@ -75,22 +78,25 @@ def main():
 
     image = sl.Mat()
     runtime_parameters = sl.RuntimeParameters()
+    read_key = ''
+    while(read_key != 'q'):
+        read_key = input("\nPress any key to take an image, press q to quit.\n")
+        if read_key == 'q':
+            break
+        # Grab an image, a RuntimeParameters object must be given to grab()
+        if zed.grab(runtime_parameters) <= sl.ERROR_CODE.SUCCESS:
+            # A new image is available if grab() returns ERROR_CODE.SUCCESS or a WARNING (an error_code lower than ERROR_CODE.SUCCESS)
+            zed.retrieve_image(image, sl.VIEW.LEFT)
+            img = image.get_data().copy()[:,:,:3]
+            timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)  # Get the timestamp at the time the image was captured
+            print("Image resolution: {0} x {1} || Image timestamp: {2}".format(image.get_width(), image.get_height(),
+                timestamp.get_milliseconds()))
 
-    read_key = input("Press Enter to take image.")
-    # Grab an image, a RuntimeParameters object must be given to grab()
-    if zed.grab(runtime_parameters) <= sl.ERROR_CODE.SUCCESS:
-        # A new image is available if grab() returns ERROR_CODE.SUCCESS or a WARNING (an error_code lower than ERROR_CODE.SUCCESS)
-        zed.retrieve_image(image, sl.VIEW.LEFT)
-        img = image.get_data().copy()[:,:,:3]
-        timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)  # Get the timestamp at the time the image was captured
-        print("Image resolution: {0} x {1} || Image timestamp: {2}\n".format(image.get_width(), image.get_height(),
-            timestamp.get_milliseconds()))
+        mse = compute_error(fx, fy, cx, cy, kp, img)
+        print(f"AprilTag localization error: {mse}")
 
     # Close the camera
     zed.close()
-
-    mse = compute_error(fx, fy, cx, cy, kp, img)
-    print(f"AprilTag localization error: {mse}")
 
 if __name__ == "__main__":
     main()
