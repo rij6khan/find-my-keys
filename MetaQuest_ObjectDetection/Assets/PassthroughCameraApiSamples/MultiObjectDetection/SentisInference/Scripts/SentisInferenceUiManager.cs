@@ -13,10 +13,14 @@ namespace PassthroughCameraSamples.MultiObjectDetection
     public class SentisInferenceUiManager : MonoBehaviour
     {
         [Header("Placement configuration")]
-        [SerializeField] private EnvironmentRayCastSampleManager m_environmentRaycast;
-        [SerializeField] private PassthroughCameraAccess m_cameraAccess;
+        [SerializeField]
+        private EnvironmentRayCastSampleManager m_environmentRaycast;
 
-        [SerializeField] private RectTransform m_detectionBoxPrefab;
+        [SerializeField]
+        private PassthroughCameraAccess m_cameraAccess;
+
+        [SerializeField]
+        private RectTransform m_detectionBoxPrefab;
 
         [Space(10)]
         public UnityEvent<int> OnObjectsDetected;
@@ -31,7 +35,7 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             public string ClassName;
             public int ClassId;
 
-            // Added: YOLO confidence score for this detection.
+            // YOLO confidence score for this detection.
             public float Confidence;
 
             public RectTransform BoxRectTransform;
@@ -71,7 +75,8 @@ namespace PassthroughCameraSamples.MultiObjectDetection
             Vector2 inputSize,
             Pose cameraPose)
         {
-            Vector2 currentResolution = m_cameraAccess.CurrentResolution;
+            Vector2 currentResolution =
+                m_cameraAccess.CurrentResolution;
 
             if (detections.Count == 0)
             {
@@ -98,7 +103,10 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                     y2 - y1
                 );
 
-                // Detection center in normalized model coordinates.
+                // ---------------------------------------------------------
+                // 2D detection center in normalized model coordinates.
+                // ---------------------------------------------------------
+
                 Vector2 normalizedCenter =
                     rect.center / inputSize;
 
@@ -107,14 +115,23 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                     currentResolution *
                     (normalizedCenter - Vector2.one * 0.5f);
 
+                // ---------------------------------------------------------
                 // Get YOLO class name.
+                // ---------------------------------------------------------
+
                 string classname =
                     m_labels[detection.classId]
                     .Replace(" ", "_");
 
+                // =========================================================
+                // 2D -> 3D LOCALIZATION
+                // =========================================================
+
                 // ---------------------------------------------------------
-                // Convert 2D detection center into a camera ray.
+                // Convert the 2D YOLO detection center into a ray
+                // originating from the Quest RGB camera.
                 // ---------------------------------------------------------
+
                 var ray =
                     m_cameraAccess.ViewportPointToRay(
                         new Vector2(
@@ -125,39 +142,65 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                     );
 
                 // ---------------------------------------------------------
-                // Use environment depth to obtain the physical 3D point.
+                // Use Quest environment depth / raycast to find the
+                // physical surface intersected by the detection-center ray.
                 // ---------------------------------------------------------
+
                 var worldPos =
                     m_environmentRaycast.Raycast(ray);
 
                 if (!worldPos.HasValue)
                 {
                     Debug.Log(
-                        $"RaycastManager failed, ray:{ray}, cameraPose:{cameraPose}"
+                        $"RaycastManager failed, " +
+                        $"ray:{ray}, " +
+                        $"cameraPose:{cameraPose}"
                     );
 
                     continue;
                 }
 
-                var normRect = new Rect(
-                    rect.x / inputSize.x,
-                    1f - rect.yMax / inputSize.y,
-                    rect.width / inputSize.x,
-                    rect.height / inputSize.y
-                );
+                // ---------------------------------------------------------
+                // Normalize the complete YOLO bounding rectangle.
+                // ---------------------------------------------------------
 
-                // Distance from Quest camera to detected physical surface.
+                var normRect =
+                    new Rect(
+                        rect.x / inputSize.x,
+                        1f - rect.yMax / inputSize.y,
+                        rect.width / inputSize.x,
+                        rect.height / inputSize.y
+                    );
+
+                // ---------------------------------------------------------
+                // Distance from Quest RGB camera to the physical surface.
+                // ---------------------------------------------------------
+
                 float distance =
                     Vector3.Distance(
                         cameraPose.position,
                         worldPos.Value
                     );
 
-                // ---------------------------------------------------------
-                // Quest / Unity world-space center of the detected object.
+                // =========================================================
+                // QUEST / UNITY 3D OBJECT POSITION
+                // =========================================================
+
+                // This is the estimated physical 3D position associated
+                // with the center of the detected YOLO bounding box.
                 //
-                // We will expose X, Y, Z from this value in the next step.
+                // Coordinate frame:
+                // Unity / Quest world
+                //
+                // Units:
+                // meters
+                //
+                // Components:
+                // worldSpaceCenter.x
+                // worldSpaceCenter.y
+                // worldSpaceCenter.z
                 // ---------------------------------------------------------
+
                 Vector3 worldSpaceCenter =
                     m_cameraAccess
                     .ViewportPointToRay(
@@ -166,19 +209,41 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                     )
                     .GetPoint(distance);
 
+                // ---------------------------------------------------------
+                // NEW:
+                // Print the object's Quest-world 3D position to Logcat.
+                // ---------------------------------------------------------
+
+                Debug.Log(
+                    $"OBJECT_3D: " +
+                    $"Class={classname}, " +
+                    $"Confidence={detection.confidence:P1}, " +
+                    $"X={worldSpaceCenter.x:F3}, " +
+                    $"Y={worldSpaceCenter.y:F3}, " +
+                    $"Z={worldSpaceCenter.z:F3} m"
+                );
+
+                // ---------------------------------------------------------
+                // Direction from camera to detected object's 3D position.
+                // ---------------------------------------------------------
+
                 Vector3 normal =
                     (worldSpaceCenter - cameraPose.position)
                     .normalized;
 
-                // ---------------------------------------------------------
-                // Estimate physical bounding-box size at object depth.
-                // ---------------------------------------------------------
+                // =========================================================
+                // ESTIMATE PHYSICAL BOUNDING-BOX SIZE
+                // =========================================================
+
+                // Construct a plane through the object's estimated
+                // 3D position facing the camera.
                 var plane =
                     new Plane(
                         normal,
                         worldSpaceCenter
                     );
 
+                // Rays through opposite bounding-box corners.
                 var minRay =
                     m_cameraAccess.ViewportPointToRay(
                         normRect.min,
@@ -211,7 +276,7 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                         intersectionDistanceMax
                     );
 
-                // Convert the world-space corners into camera-local space.
+                // Convert world-space corners into camera-local space.
                 Vector3 topLeftLocal =
                     Quaternion.Inverse(cameraPose.rotation) *
                     (min - cameraPose.position);
@@ -232,7 +297,10 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                         )
                     );
 
-                // Create or reuse the green detection box.
+                // =========================================================
+                // CREATE / UPDATE THE GREEN 3D DETECTION BOX
+                // =========================================================
+
                 BoundingBoxData boxData =
                     GetOrCreateBoundingBoxData(
                         detection.classId,
@@ -240,29 +308,44 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                         size
                     );
 
-                // Store current confidence.
+                // Store confidence.
                 boxData.Confidence =
                     detection.confidence;
 
                 RectTransform boxRectTransform =
                     boxData.BoxRectTransform;
 
-                // ---------------------------------------------------------
-                // Display class + confidence + center information.
+                // =========================================================
+                // DISPLAY DETECTION INFORMATION IN HEADSET
+                // =========================================================
+
+                // NEW:
+                // Display Quest-world X/Y/Z in meters directly on
+                // the green YOLO detection label.
                 //
-                // P1 converts:
-                // 0.914 -> 91.4%
+                // F2 displays two digits after the decimal:
+                //
+                // X=0.42
+                // Y=1.08
+                // Z=1.74
                 // ---------------------------------------------------------
+
                 boxRectTransform
                     .GetComponentInChildren<Text>()
                     .text =
                     $"Id: {detection.classId}  " +
                     $"Class: {classname}  " +
                     $"Confidence: {detection.confidence:P1}\n" +
-                    $"Center (px): {center:0.0}  " +
-                    $"Center (%): {normalizedCenter:0.00}";
+                    $"3D Position (m): " +
+                    $"X={worldSpaceCenter.x:F2}, " +
+                    $"Y={worldSpaceCenter.y:F2}, " +
+                    $"Z={worldSpaceCenter.z:F2}\n" +
+                    $"Center (px): {center:0.0}";
 
-                // Position the green box in physical world space.
+                // ---------------------------------------------------------
+                // Position the green box at the physical object location.
+                // ---------------------------------------------------------
+
                 boxRectTransform.SetPositionAndRotation(
                     worldSpaceCenter,
                     Quaternion.LookRotation(normal)
@@ -275,6 +358,10 @@ namespace PassthroughCameraSamples.MultiObjectDetection
                     Time.time;
             }
         }
+
+        // =============================================================
+        // DETECTION BOX MANAGEMENT
+        // =============================================================
 
         private BoundingBoxData GetOrCreateBoundingBoxData(
             int classId,
@@ -296,10 +383,17 @@ namespace PassthroughCameraSamples.MultiObjectDetection
 
                 Vector4 newBox =
                     new Vector4(
-                        localPos.x - worldSpaceSize.x * 0.5f,
-                        localPos.y - worldSpaceSize.y * 0.5f,
-                        localPos.x + worldSpaceSize.x * 0.5f,
-                        localPos.y + worldSpaceSize.y * 0.5f
+                        localPos.x -
+                        worldSpaceSize.x * 0.5f,
+
+                        localPos.y -
+                        worldSpaceSize.y * 0.5f,
+
+                        localPos.x +
+                        worldSpaceSize.x * 0.5f,
+
+                        localPos.y +
+                        worldSpaceSize.y * 0.5f
                     );
 
                 Vector2 sizeDelta =

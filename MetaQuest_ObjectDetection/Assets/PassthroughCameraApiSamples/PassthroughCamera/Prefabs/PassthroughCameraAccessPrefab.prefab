@@ -10,6 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 7047676844597515174}
   - component: {fileID: 1748868316715821956}
+  - component: {fileID: 5118639071727864777}
   m_Layer: 0
   m_Name: PassthroughCameraAccessPrefab
   m_TagString: Untagged
@@ -46,5 +47,22 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   CameraPosition: 0
   RequestedResolution: {x: 1280, y: 960}
+  _maxFramerate: 60
   TargetMaterial: {fileID: 0}
   _texturePropertyName: 
+--- !u!114 &5118639071727864777
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7847449403238870662}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2a2be6793bdb8ad41b9f4d233e2ea915, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  cameraAccess: {fileID: 1748868316715821956}
+  tagFamily: tag36h11
+  tagId: 2
+  tagSizeMeters: 0.165

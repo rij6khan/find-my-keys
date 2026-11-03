@@ -82,4 +82,16 @@ MemoryCaptures/
 * - BK.txt
 * - BK.txt.meta
 * - BK.cs
-* - BK.cs.metaFindRetrieveKeys/Assets/Resources/DevAgentSettings.asset
+* - BK.cs.meta
+
+# ------------------------------------------------------------
+# Python / QuestObjectMemory local runtime files
+# ------------------------------------------------------------
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.db-journal
+*.db-shm
+*.db-wal
