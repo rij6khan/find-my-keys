@@ -40,57 +40,59 @@ def tag_detector(image, intrinsics, pose=None):
 
 
 def compute_transform(reference, live, intrinsics, calibration):
-    """Return robot-base-from-Unity-world using all twelve tag corners."""
+    """Return R_T_W using all twelve tag corners; R is the fixed SLAM world."""
     ref_corners, _, _ = reference
     live_corners, _, pose = live
     if set(ref_corners) != TAG_IDS or set(live_corners) != TAG_IDS:
         raise ValueError("Both images must contain tag IDs 0, 1, and 2")
     prefix = "image" if "image_fx" in intrinsics else "sensor"
-    k_ref = np.array([[intrinsics[f"{prefix}_fx"], 0, intrinsics[f"{prefix}_cx"]],
+    K_C = np.array([[intrinsics[f"{prefix}_fx"], 0, intrinsics[f"{prefix}_cx"]],
                       [0, intrinsics[f"{prefix}_fy"], intrinsics[f"{prefix}_cy"]],
                       [0, 0, 1]], dtype=float)
-    d_ref = np.asarray(intrinsics.get("distortion", np.zeros(5)), dtype=float)
+    if prefix == "sensor":
+        K_C[0, 2] -= float(intrinsics.get("crop_x", 0.))
+        K_C[1, 2] -= float(intrinsics.get("crop_y", 0.))
+    D_C = np.asarray(intrinsics.get("distortion", np.zeros(5)), dtype=float)
     points = []
     for tag_id in sorted(TAG_IDS):
-        ok, rvec, tvec = cv2.solvePnP(TAG_POINTS, ref_corners[tag_id], k_ref, d_ref,
+        ok, rvec, tvec = cv2.solvePnP(TAG_POINTS, ref_corners[tag_id], K_C, D_C,
                                      flags=cv2.SOLVEPNP_IPPE_SQUARE)
         if not ok or tvec[2, 0] <= 0:
             raise RuntimeError(f"Reference pose failed for tag {tag_id}")
         points.extend(TAG_POINTS @ cv2.Rodrigues(rvec)[0].T + tvec.reshape(3))
-    k_live = np.asarray(calibration["matrix"], dtype=float)
-    d_live = np.asarray(calibration["distortion"], dtype=float)
+    K_Z = np.asarray(calibration["matrix"], dtype=float)
+    D_Z = np.asarray(calibration["distortion"], dtype=float)
     pixels = np.concatenate([live_corners[i] for i in sorted(TAG_IDS)])
     points = np.asarray(points)
     ok, rvec, tvec, inliers = cv2.solvePnPRansac(
-        points, pixels, k_live, d_live, iterationsCount=200,
+        points, pixels, K_Z, D_Z, iterationsCount=200,
         reprojectionError=3.0, confidence=.999, flags=cv2.SOLVEPNP_ITERATIVE)
     if not ok or inliers is None or any(
             not np.any((inliers.flatten() // 4) == i) for i in range(3)):
         raise RuntimeError("PnP-RANSAC did not retain all three tags")
     idx = inliers.flatten()
-    rvec, tvec = cv2.solvePnPRefineLM(points[idx], pixels[idx], k_live, d_live, rvec, tvec)
-    optical_from_ref = np.eye(4)
-    optical_from_ref[:3, :3] = cv2.Rodrigues(rvec)[0]
-    optical_from_ref[:3, 3] = tvec.flatten()
-    if np.any((points @ optical_from_ref[:3, :3].T + tvec.reshape(3))[:, 2] <= 0):
+    rvec, tvec = cv2.solvePnPRefineLM(points[idx], pixels[idx], K_Z, D_Z, rvec, tvec)
+    Zopt_T_Copt = np.eye(4)
+    Zopt_T_Copt[:3, :3] = cv2.Rodrigues(rvec)[0]
+    Zopt_T_Copt[:3, 3] = tvec.flatten()
+    if np.any((points @ Zopt_T_Copt[:3, :3].T + tvec.reshape(3))[:, 2] <= 0):
         raise RuntimeError("PnP placed tags behind the camera")
 
     def components(value, keys):
         return [value[k] for k in keys] if isinstance(value, dict) else value
 
-    unity_world_from_camera = np.eye(4)
-    unity_world_from_camera[:3, :3] = Rotation.from_quat(components(
+    W_T_C = np.eye(4)
+    W_T_C[:3, :3] = Rotation.from_quat(components(
         intrinsics["camera_world_quaternion"], "xyzw")).as_matrix()
-    unity_world_from_camera[:3, 3] = components(intrinsics["camera_world_position"], "xyz")
+    W_T_C[:3, 3] = components(intrinsics["camera_world_position"], "xyz")
     # Unity camera: right/up/forward; OpenCV: right/down/forward.
-    ref_optical_from_unity_camera = np.diag([1., -1., 1., 1.])
+    Copt_T_C = np.diag([1., -1., 1., 1.])
     # ZED RIGHT_HANDED_Y_UP: right/up/backward.
-    zed_from_optical = np.diag([1., -1., -1., 1.])
-    world_from_camera = pose_matrix(pose[7:14])
-    world_from_base = pose_matrix(pose[:7])
-    return (np.linalg.inv(world_from_base) @ world_from_camera @ zed_from_optical
-            @ optical_from_ref @ ref_optical_from_unity_camera
-            @ np.linalg.inv(unity_world_from_camera))
+    Z_T_Zopt = np.diag([1., -1., -1., 1.])
+    Z_T_C = Z_T_Zopt @ Zopt_T_Copt @ Copt_T_C
+    R_T_Z = pose_matrix(pose[7:14])
+    R_T_W = R_T_Z @ Z_T_C @ np.linalg.inv(W_T_C)
+    return R_T_W
 
 
 class ImageSub:
@@ -168,8 +170,9 @@ def main(args):
         raise ValueError(f"Cannot load {args.tag_path}")
     intrinsics = json.loads(Path(args.int_json).read_text())
     obj = json.loads(Path("object.json").read_text())
-    point = np.array([obj[f"quest_{axis}"] for axis in "xyz"] + [1.], dtype=float)
-    if not np.isfinite(point).all():
+    W_T_O = np.eye(4)
+    W_T_O[:3, 3] = [obj[f"quest_{axis}"] for axis in "xyz"]
+    if not np.isfinite(W_T_O).all():
         raise ValueError("Object coordinates must be finite")
     reference = tag_detector(image, intrinsics)
     if set(reference[0]) != TAG_IDS:
@@ -200,12 +203,11 @@ def main(args):
             time.sleep(.05)
         else:
             raise TimeoutError("All three AprilTags were not visible within 120 seconds")
-        transform = compute_transform(reference, live, intrinsics, calibration)
-        local_point = transform @ point
-        world_point = pose_matrix(last_pose[:7]) @ local_point
-        print(f"Object in robot frame: {local_point[:3]}")
+        R_T_W = compute_transform(reference, live, intrinsics, calibration)
+        R_T_O = R_T_W @ W_T_O
+        print(f"Object in SLAM world frame: {R_T_O[:3, 3]}")
         goals = GoalPub()
-        goals.navigate(world_point)
+        goals.navigate(R_T_O[:3, 3])
         print("Arrived at object goal")
     finally:
         try:
